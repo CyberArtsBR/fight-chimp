@@ -31,28 +31,93 @@ const MODEL_URLS = ['./models/fighter-1.glb', './models/fighter-2.glb'];
 
 const clamp = THREE.MathUtils.clamp;
 const damp = (from: number, to: number, lambda: number, dt: number) => THREE.MathUtils.lerp(from, to, 1 - Math.exp(-lambda * dt));
-const normName = (s: string) => s.toLowerCase().replace(/[\s_.-]/g, '');
+function boneName(name: string) {
+  return name
+    .toLowerCase()
+    .replace(/mixamorig/g, '')
+    .replace(/armature/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function rawSide(name: string): 'l' | 'r' | undefined {
+  const raw = name.toLowerCase();
+  if (raw.includes('left')) return 'l';
+  if (raw.includes('right')) return 'r';
+  if (/(^|[_.:\-\s])l($|[_.:\-\s])/.test(raw) || /[_.:\-]l$/.test(raw)) return 'l';
+  if (/(^|[_.:\-\s])r($|[_.:\-\s])/.test(raw) || /[_.:\-]r$/.test(raw)) return 'r';
+  const n = boneName(raw);
+  if (/(upperarm|forearm|thigh|calf|upleg|lowerleg|upperleg)l$/.test(n)) return 'l';
+  if (/(upperarm|forearm|thigh|calf|upleg|lowerleg|upperleg)r$/.test(n)) return 'r';
+  return undefined;
+}
+
+function scoreBone(obj: THREE.Object3D, aliases: string[], side?: 'l' | 'r') {
+  const n = boneName(obj.name);
+  const detected = rawSide(obj.name);
+  if (side && detected && detected !== side) return -1000;
+  let score = side && detected === side ? 24 : 0;
+  for (const alias of aliases) {
+    const a = boneName(alias);
+    if (n === a) score = Math.max(score, 120);
+    else if (n.endsWith(a)) score = Math.max(score, 92);
+    else if (n.startsWith(a)) score = Math.max(score, 82);
+    else if (n.includes(a)) score = Math.max(score, 64);
+  }
+  return score - Math.min(n.length * 0.06, 3);
+}
+
+function pickBone(bones: THREE.Object3D[], aliases: string[], side?: 'l' | 'r') {
+  let best: THREE.Object3D | undefined;
+  let bestScore = 18;
+  for (const bone of bones) {
+    const score = scoreBone(bone, aliases, side);
+    if (score > bestScore) { bestScore = score; best = bone; }
+  }
+  return best;
+}
+
+function firstBoneChild(obj: THREE.Object3D | undefined, reject: RegExp) {
+  if (!obj) return undefined;
+  const queue = [...obj.children];
+  while (queue.length) {
+    const child = queue.shift()!;
+    if ((child as THREE.Bone).isBone && !reject.test(boneName(child.name))) return child;
+    queue.push(...child.children);
+  }
+  return undefined;
+}
 
 function findRig(root: THREE.Object3D): Rig {
-  const rig: Rig = {};
-  root.traverse((o) => {
-    if (!(o as THREE.Bone).isBone && !o.name) return;
-    const n = normName(o.name);
-    const set = (key: keyof Rig, tests: string[]) => {
-      if (!rig[key] && tests.some((t) => n.includes(t))) rig[key] = o;
-    };
-    set('head', ['head']);
-    set('chest', ['upperchest', 'chest']);
-    set('armL', ['leftupperarm', 'upperarmleft', 'lupperarm']);
-    set('armR', ['rightupperarm', 'upperarmright', 'rupperarm']);
-    set('foreL', ['leftforearm', 'forearmleft', 'lforearm']);
-    set('foreR', ['rightforearm', 'forearmright', 'rforearm']);
-    set('legL', ['leftupleg', 'leftthigh', 'lthigh']);
-    set('legR', ['rightupleg', 'rightthigh', 'rthigh']);
-    set('calfL', ['leftleg', 'leftcalf', 'lcalf']);
-    set('calfR', ['rightleg', 'rightcalf', 'rcalf']);
-  });
+  const bones: THREE.Object3D[] = [];
+  root.traverse((obj) => { if ((obj as THREE.Bone).isBone) bones.push(obj); });
+
+  const rig: Rig = {
+    head: pickBone(bones, ['head']),
+    chest: pickBone(bones, ['upperchest', 'chest', 'spine02', 'spine2', 'spine03', 'spine3']),
+    armL: pickBone(bones, ['leftupperarm', 'upperarm', 'leftarm', 'arm'], 'l'),
+    armR: pickBone(bones, ['rightupperarm', 'upperarm', 'rightarm', 'arm'], 'r'),
+    foreL: pickBone(bones, ['leftforearm', 'forearm', 'leftlowerarm', 'lowerarm'], 'l'),
+    foreR: pickBone(bones, ['rightforearm', 'forearm', 'rightlowerarm', 'lowerarm'], 'r'),
+    legL: pickBone(bones, ['leftupleg', 'leftthigh', 'thigh', 'upperleg'], 'l'),
+    legR: pickBone(bones, ['rightupleg', 'rightthigh', 'thigh', 'upperleg'], 'r'),
+    calfL: pickBone(bones, ['leftleg', 'leftcalf', 'calf', 'lowerleg', 'shin'], 'l'),
+    calfR: pickBone(bones, ['rightleg', 'rightcalf', 'calf', 'lowerleg', 'shin'], 'r'),
+  };
+
+  rig.foreL ??= firstBoneChild(rig.armL, /(hand|finger|thumb)/);
+  rig.foreR ??= firstBoneChild(rig.armR, /(hand|finger|thumb)/);
+  rig.calfL ??= firstBoneChild(rig.legL, /(foot|toe)/);
+  rig.calfR ??= firstBoneChild(rig.legR, /(foot|toe)/);
   return rig;
+}
+
+function rigSummary(rig: Rig) {
+  const entries = Object.entries(rig).filter(([, value]) => Boolean(value));
+  return {
+    matched: entries.length,
+    total: 10,
+    bones: Object.fromEntries(entries.map(([key, value]) => [key, value?.name ?? ''])),
+  };
 }
 
 function captureRest(rig: Rig) {
@@ -152,6 +217,9 @@ class ArenaGame {
   aiWait = 0;
   elapsed = 0;
   shake = 0;
+  hitStop = 0;
+  cameraPunch = 0;
+  roundTransition = 0;
   raf = 0;
   onState: (s: Snapshot) => void;
   observer: ResizeObserver;
@@ -318,6 +386,8 @@ class ArenaGame {
       });
       visual.add(s);
       rig = findRig(s);
+      const summary = rigSummary(rig);
+      console.info(`[Canopy Clash] Fighter ${index + 1} rig ${summary.matched}/${summary.total}`, summary.bones);
       model = 'glb';
     } catch {
       const s = fallbackChimp(index === 0 ? 0x6a4732 : 0x3f5666, index === 0 ? 0xff9337 : 0x62d7ff);
@@ -408,6 +478,8 @@ class ArenaGame {
     defender.vx = attacker.face * (block ? 0.55 : attacker.action === 'kick' ? 2.8 : 1.6);
     if (!block) { defender.action = defender.hp <= 0 ? 'ko' : 'hit'; defender.time = 0; defender.duration = defender.hp <= 0 ? 1.2 : 0.3; }
     this.shake = block ? 0.04 : attacker.action === 'kick' ? 0.15 : 0.09;
+    this.hitStop = block ? 0.024 : attacker.action === 'kick' ? 0.072 : 0.046;
+    this.cameraPunch = block ? 0.08 : attacker.action === 'kick' ? 0.34 : 0.2;
     this.spark((attacker.x + defender.x) * 0.5, FLOOR + 1.3, block ? 0x76d5ff : 0xffaa43);
     this.emit();
   }
@@ -504,6 +576,7 @@ class ArenaGame {
       this.state = 'match-over';
       this.message = this.p1.rounds > this.p2.rounds ? 'PLAYER 1 WINS MATCH' : 'CPU WINS MATCH';
     }
+    this.roundTransition = this.state === 'match-over' ? 0 : 2.25;
     this.emit();
   }
 
@@ -526,6 +599,18 @@ class ArenaGame {
     if (!this.p1 || !this.p2) return;
     this.elapsed += dt;
     this.updateFx(dt);
+
+    if (this.hitStop > 0) {
+      this.hitStop = Math.max(0, this.hitStop - dt);
+      this.updateCamera(dt);
+      return;
+    }
+
+    if (this.state === 'round-over' && this.roundTransition > 0) {
+      this.roundTransition -= dt;
+      if (this.roundTransition <= 0) this.start();
+    }
+
     if (this.state === 'ready' && this.ready > 0) {
       this.ready -= dt;
       if (this.ready <= 1.05 && this.message !== 'FIGHT!') { this.message = 'FIGHT!'; this.emit(); }
@@ -544,10 +629,19 @@ class ArenaGame {
       this.animate(this.p1, dt);
       this.animate(this.p2, dt);
     }
+    this.updateCamera(dt);
+  }
+
+  updateCamera(dt: number) {
     this.shake *= Math.exp(-dt * 18);
-    this.camera.position.x = (Math.random() - 0.5) * this.shake;
-    this.camera.position.y = 0.15 + (Math.random() - 0.5) * this.shake * 0.45;
-    this.camera.lookAt(0, -0.05, 0);
+    this.cameraPunch *= Math.exp(-dt * 9);
+    const center = (this.p1.x + this.p2.x) * 0.5;
+    const distance = Math.abs(this.p2.x - this.p1.x);
+    const targetZ = clamp(10.9 + distance * 0.43 - this.cameraPunch, 11.2, 13.6);
+    this.camera.position.x = damp(this.camera.position.x, center * 0.18, 4.5, dt) + (Math.random() - 0.5) * this.shake;
+    this.camera.position.y = damp(this.camera.position.y, 0.15, 6, dt) + (Math.random() - 0.5) * this.shake * 0.45;
+    this.camera.position.z = damp(this.camera.position.z, targetZ, 4.5, dt);
+    this.camera.lookAt(center * 0.12, -0.05, 0);
   }
 
   loop() {
