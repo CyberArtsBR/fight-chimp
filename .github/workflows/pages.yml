@@ -1,8 +1,8 @@
 name: Deploy Pages
 
+# GitHub Pages must first be enabled in Repository Settings > Pages.
+# Until then this workflow stays manual to avoid a failed deploy on every code push.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
