@@ -22,9 +22,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Fetch and validate Chimpion GLBs
+        run: bash scripts/fetch-models.sh
       - run: npm install --no-audit --no-fund
       - run: npm run build
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
