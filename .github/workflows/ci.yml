@@ -15,5 +15,7 @@ jobs:
           node-version: 22
       - name: Fetch and validate Chimpion GLBs
         run: bash scripts/fetch-models.sh
+      - name: Inspect Chimpion rigs
+        run: node scripts/inspect-models.mjs
       - run: npm install --no-audit --no-fund
       - run: npm run build
