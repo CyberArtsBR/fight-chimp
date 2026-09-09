@@ -1,0 +1,38 @@
+name: Import Chimpion Models
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  import-models:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check whether models are already committed
+        id: check
+        shell: bash
+        run: |
+          if [[ -f public/models/fighter-1.glb && -f public/models/fighter-2.glb ]] &&
+             [[ "$(head -c 4 public/models/fighter-1.glb)" == "glTF" ]] &&
+             [[ "$(head -c 4 public/models/fighter-2.glb)" == "glTF" ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Download validated Chimpion GLBs
+        if: steps.check.outputs.ready != 'true'
+        run: bash scripts/fetch-models.sh
+      - name: Commit Chimpion GLB assets
+        if: steps.check.outputs.ready != 'true'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/models/fighter-1.glb public/models/fighter-2.glb
+          git commit -m "Add Chimpion fighter GLB assets"
+          git push origin HEAD:main
