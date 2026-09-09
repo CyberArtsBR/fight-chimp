@@ -62,4 +62,20 @@ npm run preview
 
 ## Model rig support
 
-The loader recognizes common humanoid bone names for head, chest, upper arms, forearms, thighs and calves. The game then drives those bones procedurally for walking, punching, kicking, guarding and hit reactions. Models with unusual custom bone names can still load visually but may need a small rig-name mapping pass for best animation quality.
+Both supplied Chimpion files were inspected in CI and use the same Mixamo-style humanoid skeleton:
+
+- **Fighter 1:** 28 nodes, 1 skin, 25 joints, no embedded animation clips.
+- **Fighter 2:** 28 nodes, 1 skin, 25 joints, 1 embedded Mixamo clip (`Armature|mixamo.com|Layer0`).
+- Key joints include `Hips`, `Spine`, `Spine1`, `Spine2`, `Neck`, `Head`, left/right shoulders, arms, forearms, hands, thighs, calves, feet and toes.
+
+The runtime matcher now understands Mixamo prefixes plus common Blender/custom naming variants. Combat poses explicitly use hips, spine, chest, neck, shoulders, upper/lower arms and upper/lower legs, while retaining procedural fallback fighters if a GLB cannot load.
+
+## Current combat polish
+
+- Rig-specific procedural idle, walk, punch, kick, guard, hit and KO posing
+- Hit-stop on clean attacks and shorter block-stop on guarded attacks
+- Dynamic side-view camera framing based on fighter distance
+- Impact camera punch and shake
+- Automatic transition between rounds
+- Runtime rig-match diagnostics in the browser console
+- CI-side GLB validation and skeleton inspection
