@@ -224,6 +224,7 @@ class ArenaGame {
   timer = 60;
   ready = 0;
   aiWait = 0;
+  aiCommit = 0;
   elapsed = 0;
   shake = 0;
   hitStop = 0;
@@ -425,7 +426,7 @@ class ArenaGame {
       f.root.position.x = f.x;
     });
     this.timer = 60;
-    this.ready = 2.1;
+    this.ready = 2.35;
     this.state = 'ready';
     this.message = 'ROUND ' + (this.p1.rounds + this.p2.rounds + 1);
     this.emit();
@@ -459,18 +460,60 @@ class ArenaGame {
 
   updateAI(dt: number) {
     this.aiWait -= dt;
-    if (this.aiWait > 0 || this.state !== 'fighting') return;
-    this.aiWait = 0.1 + Math.random() * 0.14;
+    this.aiCommit -= dt;
+    if (this.state !== 'fighting') return;
+
     const a = this.p2;
     const p = this.p1;
     const d = Math.abs(a.x - p.x);
+
+    if (this.aiCommit > 0) return;
+    if (this.aiWait > 0) return;
+
+    const losing = a.hp + 18 < p.hp;
+    const lowHealth = a.hp < 30;
+    const reaction = lowHealth ? 0.09 : losing ? 0.11 : 0.13;
+    this.aiWait = reaction + Math.random() * 0.12;
+
     Object.keys(a.input).forEach((k) => { a.input[k as keyof InputState] = false; });
-    if ((p.action === 'punch' || p.action === 'kick') && d < 1.65 && Math.random() < 0.66) { a.input.guard = true; return; }
-    if (d > 1.38) { if (p.x < a.x) a.input.left = true; else a.input.right = true; return; }
+
+    const playerAttacking = p.action === 'punch' || p.action === 'kick';
+    if (playerAttacking && d < 1.72) {
+      const guardChance = lowHealth ? 0.82 : 0.66;
+      if (Math.random() < guardChance) {
+        a.input.guard = true;
+        this.aiCommit = 0.18 + Math.random() * 0.16;
+        return;
+      }
+    }
+
+    if (d > 1.72) {
+      if (p.x < a.x) a.input.left = true; else a.input.right = true;
+      this.aiCommit = 0.12 + Math.random() * 0.16;
+      return;
+    }
+
+    if (d < 0.92 && Math.random() < 0.28) {
+      if (p.x < a.x) a.input.right = true; else a.input.left = true;
+      this.aiCommit = 0.16 + Math.random() * 0.18;
+      return;
+    }
+
+    const aggression = losing ? 0.78 : 0.64;
     const r = Math.random();
-    if (r < 0.45) a.input.punch = true;
-    else if (r < 0.78) a.input.kick = true;
-    else if (r < 0.92) a.input.guard = true;
+    if (r < aggression * 0.56) {
+      a.input.punch = true;
+      this.aiCommit = 0.12;
+    } else if (r < aggression) {
+      a.input.kick = true;
+      this.aiCommit = 0.16;
+    } else if (r < aggression + 0.2) {
+      a.input.guard = true;
+      this.aiCommit = 0.18 + Math.random() * 0.18;
+    } else {
+      if (Math.random() < 0.5) a.input.left = true; else a.input.right = true;
+      this.aiCommit = 0.1 + Math.random() * 0.14;
+    }
   }
 
   hit(attacker: Fighter, defender: Fighter) {
@@ -489,21 +532,39 @@ class ArenaGame {
     this.shake = block ? 0.04 : attacker.action === 'kick' ? 0.15 : 0.09;
     this.hitStop = block ? 0.024 : attacker.action === 'kick' ? 0.072 : 0.046;
     this.cameraPunch = block ? 0.08 : attacker.action === 'kick' ? 0.34 : 0.2;
-    this.spark((attacker.x + defender.x) * 0.5, FLOOR + 1.3, block ? 0x76d5ff : 0xffaa43);
+    const impactX = (attacker.x + defender.x) * 0.5;
+    const impactY = FLOOR + (attacker.action === 'kick' ? 1.05 : 1.42);
+    this.spark(impactX, impactY, block ? 0x76d5ff : 0xffaa43);
+    this.impactRing(impactX, impactY, block ? 0x76d5ff : 0xffb14a, attacker.action === 'kick' ? 0.72 : 0.52);
     this.emit();
   }
 
   spark(x: number, y: number, color: number) {
     const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95 });
-    for (let i = 0; i < 7; i++) {
-      const s = new THREE.Mesh(new THREE.SphereGeometry(0.035 + Math.random() * 0.035, 6, 6), mat.clone());
+    for (let i = 0; i < 9; i++) {
+      const s = new THREE.Mesh(new THREE.SphereGeometry(0.035 + Math.random() * 0.04, 6, 6), mat.clone());
       s.position.set(x + (Math.random() - 0.5) * 0.45, y + (Math.random() - 0.5) * 0.4, 0.3);
-      s.userData.life = 0.22;
-      s.userData.vx = (Math.random() - 0.5) * 2;
-      s.userData.vy = Math.random() * 2;
+      s.userData.life = 0.24;
+      s.userData.maxLife = 0.24;
+      s.userData.vx = (Math.random() - 0.5) * 2.6;
+      s.userData.vy = 0.4 + Math.random() * 2.2;
       s.name = 'hitfx';
       this.scene.add(s);
     }
+  }
+
+  impactRing(x: number, y: number, color: number, size: number) {
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.18, 0.26, 32),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false })
+    );
+    ring.position.set(x, y, 0.42);
+    ring.scale.setScalar(size);
+    ring.userData.life = 0.18;
+    ring.userData.maxLife = 0.18;
+    ring.userData.grow = 8.5;
+    ring.name = 'impactring';
+    this.scene.add(ring);
   }
 
   animate(f: Fighter, dt: number) {
@@ -598,26 +659,37 @@ class ArenaGame {
     if (this.state !== 'fighting') return;
     this.state = 'round-over';
     const winner = this.p1.hp > this.p2.hp ? this.p1 : this.p2.hp > this.p1.hp ? this.p2 : null;
+    const knockout = this.p1.hp <= 0 || this.p2.hp <= 0;
     if (winner) winner.rounds++;
-    this.message = winner === this.p1 ? 'PLAYER 1 WINS ROUND' : winner === this.p2 ? 'CPU WINS ROUND' : 'DRAW';
+    this.message = winner === this.p1
+      ? (knockout ? 'K.O. — PLAYER 1 TAKES ROUND' : 'PLAYER 1 WINS ROUND')
+      : winner === this.p2
+        ? (knockout ? 'K.O. — CPU TAKES ROUND' : 'CPU WINS ROUND')
+        : 'DRAW';
     if (this.p1.rounds >= 2 || this.p2.rounds >= 2) {
       this.state = 'match-over';
       this.message = this.p1.rounds > this.p2.rounds ? 'PLAYER 1 WINS MATCH' : 'CPU WINS MATCH';
     }
-    this.roundTransition = this.state === 'match-over' ? 0 : 2.25;
+    this.roundTransition = this.state === 'match-over' ? 0 : 2.6;
     this.emit();
   }
 
   updateFx(dt: number) {
     const remove: THREE.Object3D[] = [];
     this.scene.traverse((o) => {
-      if (o.name !== 'hitfx') return;
+      if (o.name !== 'hitfx' && o.name !== 'impactring') return;
       o.userData.life -= dt;
-      o.position.x += o.userData.vx * dt;
-      o.position.y += o.userData.vy * dt;
-      o.userData.vy -= 4 * dt;
       const m = o as THREE.Mesh;
-      if (m.material && !Array.isArray(m.material)) (m.material as THREE.MeshBasicMaterial).opacity = clamp(o.userData.life / 0.22, 0, 1);
+      const maxLife = o.userData.maxLife || 0.22;
+      if (o.name === 'hitfx') {
+        o.position.x += o.userData.vx * dt;
+        o.position.y += o.userData.vy * dt;
+        o.userData.vy -= 4 * dt;
+      } else {
+        const grow = 1 + o.userData.grow * dt;
+        o.scale.multiplyScalar(grow);
+      }
+      if (m.material && !Array.isArray(m.material)) (m.material as THREE.MeshBasicMaterial).opacity = clamp(o.userData.life / maxLife, 0, 1);
       if (o.userData.life <= 0) remove.push(o);
     });
     remove.forEach((o) => this.scene.remove(o));
@@ -641,8 +713,19 @@ class ArenaGame {
 
     if (this.state === 'ready' && this.ready > 0) {
       this.ready -= dt;
-      if (this.ready <= 1.05 && this.message !== 'FIGHT!') { this.message = 'FIGHT!'; this.emit(); }
-      if (this.ready <= 0) { this.state = 'fighting'; this.message = 'FIGHT!'; this.emit(); }
+      if (this.ready <= 1.45 && this.ready > 0.72 && this.message.startsWith('ROUND')) {
+        this.message = 'READY';
+        this.emit();
+      }
+      if (this.ready <= 0.72 && this.message !== 'FIGHT!') {
+        this.message = 'FIGHT!';
+        this.emit();
+      }
+      if (this.ready <= 0) {
+        this.state = 'fighting';
+        this.message = 'FIGHT!';
+        this.emit();
+      }
     }
     if (this.state === 'fighting') {
       this.timer = Math.max(0, this.timer - dt);
