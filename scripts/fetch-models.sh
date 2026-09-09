@@ -3,18 +3,25 @@ set -euo pipefail
 
 mkdir -p public/models
 
+valid_glb() {
+  [[ -f "$1" ]] && [[ "$(head -c 4 "$1" || true)" == "glTF" ]]
+}
+
 download_glb() {
   local id="$1"
   local out="$2"
   local url="https://drive.usercontent.google.com/download?id=${id}&export=download&confirm=t"
 
+  if valid_glb "${out}"; then
+    echo "Using existing $(basename "${out}") ($(du -h "${out}" | cut -f1))"
+    return
+  fi
+
   echo "Downloading ${out}..."
   curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 180 \
     --output "${out}.tmp" "${url}"
 
-  local magic
-  magic="$(head -c 4 "${out}.tmp" || true)"
-  if [[ "${magic}" != "glTF" ]]; then
+  if [[ "$(head -c 4 "${out}.tmp" || true)" != "glTF" ]]; then
     echo "ERROR: ${out} is not a valid binary GLB (expected glTF magic header)."
     file "${out}.tmp" || true
     rm -f "${out}.tmp"
