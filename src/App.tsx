@@ -12,9 +12,10 @@ type Snapshot = {
 
 type InputState = { left: boolean; right: boolean; punch: boolean; kick: boolean; guard: boolean };
 type Rig = {
-  head?: THREE.Object3D; chest?: THREE.Object3D; armL?: THREE.Object3D; armR?: THREE.Object3D;
-  foreL?: THREE.Object3D; foreR?: THREE.Object3D; legL?: THREE.Object3D; legR?: THREE.Object3D;
-  calfL?: THREE.Object3D; calfR?: THREE.Object3D;
+  hips?: THREE.Object3D; spine?: THREE.Object3D; chest?: THREE.Object3D; neck?: THREE.Object3D; head?: THREE.Object3D;
+  shoulderL?: THREE.Object3D; shoulderR?: THREE.Object3D;
+  armL?: THREE.Object3D; armR?: THREE.Object3D; foreL?: THREE.Object3D; foreR?: THREE.Object3D;
+  legL?: THREE.Object3D; legR?: THREE.Object3D; calfL?: THREE.Object3D; calfR?: THREE.Object3D;
 };
 type Fighter = {
   root: THREE.Group; visual: THREE.Group; shadow: THREE.Mesh; rig: Rig;
@@ -89,11 +90,19 @@ function firstBoneChild(obj: THREE.Object3D | undefined, reject: RegExp) {
 
 function findRig(root: THREE.Object3D): Rig {
   const bones: THREE.Object3D[] = [];
-  root.traverse((obj) => { if ((obj as THREE.Bone).isBone) bones.push(obj); });
+  root.traverse((obj) => {
+    const namedFallbackPart = /(head|upperarm|forearm|thigh|calf|upperleg|lowerleg)/i.test(obj.name);
+    if ((obj as THREE.Bone).isBone || namedFallbackPart) bones.push(obj);
+  });
 
   const rig: Rig = {
-    head: pickBone(bones, ['head']),
+    hips: pickBone(bones, ['hips', 'pelvis']),
+    spine: pickBone(bones, ['spine']),
     chest: pickBone(bones, ['upperchest', 'chest', 'spine02', 'spine2', 'spine03', 'spine3']),
+    neck: pickBone(bones, ['neck']),
+    head: pickBone(bones, ['head']),
+    shoulderL: pickBone(bones, ['leftshoulder', 'shoulder'], 'l'),
+    shoulderR: pickBone(bones, ['rightshoulder', 'shoulder'], 'r'),
     armL: pickBone(bones, ['leftupperarm', 'upperarm', 'leftarm', 'arm'], 'l'),
     armR: pickBone(bones, ['rightupperarm', 'upperarm', 'rightarm', 'arm'], 'r'),
     foreL: pickBone(bones, ['leftforearm', 'forearm', 'leftlowerarm', 'lowerarm'], 'l'),
@@ -115,7 +124,7 @@ function rigSummary(rig: Rig) {
   const entries = Object.entries(rig).filter(([, value]) => Boolean(value));
   return {
     matched: entries.length,
-    total: 10,
+    total: 15,
     bones: Object.fromEntries(entries.map(([key, value]) => [key, value?.name ?? ''])),
   };
 }
@@ -504,33 +513,52 @@ class ArenaGame {
     f.visual.position.set(0, 0, 0);
     f.visual.rotation.z = 0;
     if (f.action === 'idle') {
-      f.visual.position.y = Math.sin(phase * 0.45) * 0.018;
+      const breathe = Math.sin(phase * 0.45);
+      f.visual.position.y = breathe * 0.018;
+      pose(f, f.rig.spine, 0.018 * breathe);
+      pose(f, f.rig.chest, 0.025 * breathe, 0, 0);
+      pose(f, f.rig.shoulderL, 0.04, 0, -0.08);
+      pose(f, f.rig.shoulderR, 0.04, 0, 0.08);
       pose(f, f.rig.armL, 0.18, 0, -0.12 * f.face);
       pose(f, f.rig.armR, 0.18, 0, 0.12 * f.face);
     } else if (f.action === 'walk') {
       const s = Math.sin(phase);
       f.visual.position.y = Math.abs(s) * 0.03;
+      pose(f, f.rig.spine, 0, 0, -s * 0.035);
       pose(f, f.rig.armL, s * 0.45); pose(f, f.rig.armR, -s * 0.45);
       pose(f, f.rig.legL, -s * 0.55); pose(f, f.rig.legR, s * 0.55);
     } else if (f.action === 'guard') {
       f.visual.position.y = -0.035;
+      pose(f, f.rig.chest, 0.08, 0, 0);
+      pose(f, f.rig.shoulderL, -0.18, 0, -0.22);
+      pose(f, f.rig.shoulderR, -0.18, 0, 0.22);
       pose(f, f.rig.armL, -1.0, 0, -0.72 * f.face); pose(f, f.rig.armR, -1.0, 0, 0.72 * f.face);
       pose(f, f.rig.foreL, -0.8); pose(f, f.rig.foreR, -0.8);
     } else if (f.action === 'punch') {
       const p = Math.sin(t * Math.PI);
       f.visual.position.x = f.face * p * 0.12;
       f.visual.rotation.z = -f.face * p * 0.08;
+      pose(f, f.rig.spine, 0, -f.face * p * 0.16, 0);
       pose(f, f.rig.chest, 0, -f.face * p * 0.42, 0);
-      pose(f, f.face === 1 ? f.rig.armR : f.rig.armL, -1.3 * p, 0, -f.face * 0.58 * p);
+      const shoulder = f.face === 1 ? f.rig.shoulderR : f.rig.shoulderL;
+      const arm = f.face === 1 ? f.rig.armR : f.rig.armL;
+      const fore = f.face === 1 ? f.rig.foreR : f.rig.foreL;
+      pose(f, shoulder, -0.22 * p, 0, -f.face * 0.25 * p);
+      pose(f, arm, -1.3 * p, 0, -f.face * 0.58 * p);
+      pose(f, fore, -0.5 * (1 - p));
     } else if (f.action === 'kick') {
       const p = Math.sin(t * Math.PI);
       f.visual.position.x = f.face * p * 0.15;
       f.visual.rotation.z = -f.face * p * 0.1;
+      pose(f, f.rig.hips, 0, f.face * p * 0.12, -f.face * p * 0.05);
+      pose(f, f.rig.chest, 0.08 * p, -f.face * p * 0.16, f.face * p * 0.05);
       pose(f, f.face === 1 ? f.rig.legR : f.rig.legL, -1.05 * p, 0, f.face * 0.5 * p);
       pose(f, f.face === 1 ? f.rig.calfR : f.rig.calfL, 1.0 * p);
     } else if (f.action === 'hit') {
       const p = 1 - t;
       f.visual.rotation.z = -f.face * p * 0.17;
+      pose(f, f.rig.chest, 0.08 * p, 0, -f.face * 0.16 * p);
+      pose(f, f.rig.neck, 0.12 * p, 0, -f.face * 0.18 * p);
       pose(f, f.rig.head, 0.22 * p, 0, -f.face * 0.3 * p);
     } else if (f.action === 'ko') {
       f.visual.rotation.z = -f.face * Math.min(t * 1.4, 1) * 1.28;
